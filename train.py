@@ -2,32 +2,31 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import logging
-import numpy as np
 from pathlib import Path
 from tqdm import tqdm
 
-from src import (
-    create_model, TaskAwareEWC, DriftDetector,
-    PrivacyPreservingReplayBuffer, ContinualLearningMetrics
+from src.models import create_model
+from src.ta_ewc import TaskAwareEWC
+from src.drift_detection import DriftDetector
+from src.replay_buffer import PrivacyPreservingReplayBuffer
+from src.metrics import (
+    ContinualLearningMetrics,
+    compute_mc_dropout_uncertainty
 )
-from src.metrics import compute_mc_dropout_uncertainty
-
-
-logger = logging.getLogger(__name__)
 
 
 class ContinualLearningTrainer:
-    """Trainer for continual learning with DEAR framework."""
 
     def __init__(self, config: dict, device: torch.device, logger):
+
         self.config = config
         self.device = device
         self.logger = logger
 
-        # Model
+        # MODEL
         self.model = create_model(config, device)
 
-        # Components
+        # COMPONENTS
         self.ewc = TaskAwareEWC(self.model, config, device)
         self.drift_detector = DriftDetector(config, device)
 
@@ -42,86 +41,89 @@ class ContinualLearningTrainer:
         self.optimizer = self._create_optimizer()
         self.criterion = nn.CrossEntropyLoss()
 
-        self.current_task = 0
-
+    # =========================
+    # OPTIMIZER
+    # =========================
     def _create_optimizer(self):
-        if self.config['training']['optimizer'] == 'adam':
+
+        if self.config['training']['optimizer'].lower() == 'adam':
             return optim.Adam(
                 self.model.parameters(),
                 lr=self.config['training']['learning_rate'],
                 weight_decay=self.config['training']['weight_decay']
             )
+
         return optim.SGD(
             self.model.parameters(),
             lr=self.config['training']['learning_rate'],
-            weight_decay=self.config['training']['weight_decay'],
-            momentum=0.9
+            momentum=0.9,
+            weight_decay=self.config['training']['weight_decay']
         )
 
     # =========================
     # TRAIN TASK
     # =========================
-    def train_task(self, task_id: int, train_loader, val_loader, task_classes: list):
+    def train_task(self, task_id, train_loader, val_loader, task_classes):
 
-        self.logger.info(f"\nTraining Task {task_id}: {task_classes}")
+        self.logger.info(f"Training Task {task_id}")
 
-        self.current_task = task_id
         best_acc = 0.0
 
         for epoch in range(self.config['training']['epochs_per_task']):
 
             train_loss = self._train_epoch(train_loader)
-
             val_acc, val_loss = self._evaluate(val_loader)
 
             self.logger.info(
-                f"Task {task_id} Epoch {epoch+1} | "
-                f"Loss: {train_loss:.4f} | Val Acc: {val_acc:.4f}"
+                f"Task {task_id} | Epoch {epoch+1} | "
+                f"Loss {train_loss:.4f} | Val Acc {val_acc:.4f}"
             )
-
-            # Drift check
-            if self._check_drift(val_loader):
-                self.logger.info("Drift detected → replay triggered")
-                self._replay_and_retrain()
 
             if val_acc > best_acc:
                 best_acc = val_acc
                 self._save_checkpoint(task_id, epoch, val_acc)
 
-        # Fisher matrix after task
+            if self._check_drift(val_loader):
+                self.logger.info("Drift detected → replay triggered")
+                self._replay_and_retrain()
+
+        # EWC update after task
         if self.config['ewc']['use_ewc']:
             self.ewc.compute_fisher_information_matrix(train_loader, task_id)
 
-        # Fill replay buffer
+        # populate buffer
         self._populate_replay_buffer(train_loader, task_id)
 
         return best_acc
 
     # =========================
-    # TRAIN EPOCH
+    # TRAIN LOOP
     # =========================
     def _train_epoch(self, train_loader):
 
         self.model.train()
         total_loss = 0
 
-        for images, labels, _ in tqdm(train_loader):
+        for images, labels in tqdm(train_loader):
 
-            images = images.to(self.device)
-            labels = labels.to(self.device)
+            images, labels = images.to(self.device), labels.to(self.device)
 
             self.optimizer.zero_grad()
 
-            logits, embeddings = self.model(images, return_embedding=True)
+            # IMPORTANT: model must return logits
+            logits = self.model(images)
 
             ce_loss = self.criterion(logits, labels)
 
-            ewc_loss = self.ewc.ewc_loss(self.model) if self.config['ewc']['use_ewc'] else 0.0
+            ewc_loss = (
+                self.ewc.ewc_loss(self.model)
+                if self.config['ewc']['use_ewc']
+                else 0.0
+            )
 
             loss = ce_loss + ewc_loss
 
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
             self.optimizer.step()
 
             total_loss += loss.item()
@@ -129,7 +131,7 @@ class ContinualLearningTrainer:
         return total_loss / len(train_loader)
 
     # =========================
-    # EVALUATION
+    # EVAL
     # =========================
     def _evaluate(self, data_loader):
 
@@ -140,10 +142,10 @@ class ContinualLearningTrainer:
         loss_sum = 0
 
         with torch.no_grad():
-            for images, labels, _ in data_loader:
 
-                images = images.to(self.device)
-                labels = labels.to(self.device)
+            for images, labels in data_loader:
+
+                images, labels = images.to(self.device), labels.to(self.device)
 
                 logits = self.model(images)
 
@@ -159,30 +161,31 @@ class ContinualLearningTrainer:
         return correct / total, loss_sum / len(data_loader)
 
     # =========================
-    # DRIFT DETECTION
+    # DRIFT DETECTION (SAFE VERSION)
     # =========================
     def _check_drift(self, val_loader):
 
         self.model.eval()
 
-        drift_flag = False
+        for i, (images, _) in enumerate(val_loader):
 
-        with torch.no_grad():
-            for i, (images, _, _) in enumerate(val_loader):
+            images = images.to(self.device)
 
-                images = images.to(self.device)
-
+            # SAFE: assume model can give embeddings OR fallback ignored
+            if hasattr(self.model, "extract_embeddings"):
                 embeddings = self.model.extract_embeddings(images)
+            else:
+                return False  # skip drift if not supported
 
-                drift, _ = self.drift_detector.detect_drift(embeddings, i)
+            drift, _ = self.drift_detector.detect_drift(embeddings, i)
 
-                if drift:
-                    drift_flag = True
+            if drift:
+                return True
 
-        return drift_flag
+        return False
 
     # =========================
-    # REPLAY BUFFER POPULATION
+    # REPLAY BUFFER
     # =========================
     def _populate_replay_buffer(self, train_loader, task_id):
 
@@ -191,26 +194,25 @@ class ContinualLearningTrainer:
         self.logger.info("Populating replay buffer...")
 
         with torch.no_grad():
-            for images, labels, _ in train_loader:
 
-                images = images.to(self.device)
-                labels = labels.to(self.device)
+            for images, labels in train_loader:
 
-                logits, embeddings = self.model(images, return_embedding=True)
+                images, labels = images.to(self.device), labels.to(self.device)
 
-                # =========================
-                # FIXED MC DROPOUT UNCERTAINTY
-                # =========================
+                if hasattr(self.model, "forward_return_embedding"):
+                    logits, embeddings = self.model(images, return_embedding=True)
+                else:
+                    logits = self.model(images)
+                    embeddings = logits  # fallback
+
                 mc_outputs = []
 
                 for _ in range(self.config['model']['mc_dropout_samples']):
-                    logits_mc, _ = self.model(images, return_embedding=True)
-                    probs_mc = torch.softmax(logits_mc, dim=1)
-                    mc_outputs.append(probs_mc)
+                    mc_logits = self.model(images)
+                    mc_outputs.append(torch.softmax(mc_logits, dim=1))
 
                 uncertainty = compute_mc_dropout_uncertainty(mc_outputs)
 
-                # IMPORTANT FIX: detach embeddings
                 self.replay_buffer.add_samples(
                     embeddings.detach(),
                     labels,
@@ -218,16 +220,16 @@ class ContinualLearningTrainer:
                     task_id
                 )
 
-        self.logger.info(f"Replay buffer stats: {self.replay_buffer.get_statistics()}")
+        self.logger.info(self.replay_buffer.get_statistics())
 
     # =========================
     # REPLAY TRAINING
     # =========================
     def _replay_and_retrain(self):
 
-        self.logger.info("Replay training started...")
+        self.logger.info("Replay training...")
 
-        for _ in range(5):
+        for _ in range(3):
 
             embeddings, labels = self.replay_buffer.sample_batch(
                 self.config['replay_buffer']['buffer_size'] // 10
@@ -236,7 +238,7 @@ class ContinualLearningTrainer:
             if embeddings is None:
                 return
 
-            logits = self.model.classifier(embeddings)
+            logits = self.model(embeddings)
 
             loss = self.criterion(logits, labels)
 
