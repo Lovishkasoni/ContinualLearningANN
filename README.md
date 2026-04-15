@@ -40,7 +40,6 @@ catastrophic-forgetting-healthcare-ai/
 
 ### Prerequisites
 - Python 3.9+
-- CUDA 11.8+ (optional, for GPU acceleration)
 - Kaggle API credentials
 
 ### Setup
