@@ -74,12 +74,11 @@ catastrophic-forgetting-healthcare-ai/
 ## Dataset
 
 **Chest X-ray COVID-19 Pneumonia Dataset**
-- Source: [Kaggle - Chest X-ray COVID19 Pneumonia](https://www.kaggle.com/prashant268/chest-xray-covid19-pneumonia)
+- Source: [Kaggle - Chest X-ray COVID19 Pneumonia](https://www.kaggle.com/datasets/amanullahasraf/covid19-pneumonia-normal-chest-xray-pa-dataset)
 - Classes: NORMAL, PNEUMONIA, COVID-19
 - Task Definition: Sequential arrival of new disease classes (simulating continual learning scenario)
   - **Task 1**: Normal vs. Pneumonia
   - **Task 2**: Add COVID-19
-  - **Task 3**: Add TB (if available)
 
 ### Download & Prepare
 
@@ -149,16 +148,7 @@ trainer.train_task(task_id=0, train_loader, val_loader, classes)
 ```
 
 ## Results
-
-### Output Files
-
-- **Models**: `results/models/task_*.pt` - Checkpoint files
-- **Metrics**: `results/metrics/metrics_summary.json` - Accuracy, transfer metrics
-- **Plots**:
-  - `results/plots/accuracy_heatmap.png` - Per-task accuracy matrix
-  - `results/plots/accuracy_per_task.png` - Training curves
-  - `results/plots/drift_timeline.png` - Drift detection events
-  - `results/plots/buffer_utilization.png` - Buffer usage over time
+![alt text](image.png)
 
 ### Key Metrics
 
@@ -277,7 +267,7 @@ ls ~/.kaggle/kaggle.json
 # Test API
 kaggle datasets list
 
-# Manual download: https://www.kaggle.com/prashant268/chest-xray-covid19-pneumonia
+# Manual download: https://www.kaggle.com/datasets/amanullahasraf/covid19-pneumonia-normal-chest-xray-pa-dataset
 # Extract to ./data/raw/
 ```
 
