@@ -2,13 +2,11 @@ import os
 import logging
 from pathlib import Path
 
-import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from PIL import Image
 from sklearn.model_selection import train_test_split
-
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +15,7 @@ logger = logging.getLogger(__name__)
 # Dataset Class
 # =========================
 class ChestXRayDataset(Dataset):
+
     def __init__(self, image_paths, labels, label_to_idx, transform=None):
         self.image_paths = image_paths
         self.labels = labels
@@ -29,6 +28,7 @@ class ChestXRayDataset(Dataset):
         return len(self.image_paths)
 
     def __getitem__(self, idx):
+
         path = self.image_paths[idx]
 
         try:
@@ -41,22 +41,22 @@ class ChestXRayDataset(Dataset):
             image = self.transform(image)
 
         label = self.encoded_labels[idx]
-        return image, label, path
+
+        return image, label
 
 
 # =========================
 # Data Pipeline
 # =========================
 class DataPipeline:
+
     def __init__(self, config: dict):
+
         self.config = config
         self.dataset_cfg = config["dataset"]
         self.task_cfg = config["tasks"]
         self.hw_cfg = config["hardware"]
 
-        # =========================
-        # FIX: PROJECT ROOT HANDLING
-        # =========================
         self.project_root = Path(__file__).resolve().parents[1]
         self.data_root = self.project_root / self.dataset_cfg["download_path"]
 
@@ -70,16 +70,13 @@ class DataPipeline:
         self.eval_tfms = self._eval_transforms()
 
     # =========================
-    # Transforms
+    # TRANSFORMS
     # =========================
     def _train_transforms(self):
         return transforms.Compose([
-            transforms.Resize(
-                (self.dataset_cfg["image_size"], self.dataset_cfg["image_size"])
-            ),
+            transforms.Resize((self.dataset_cfg["image_size"], self.dataset_cfg["image_size"])),
             transforms.RandomHorizontalFlip(0.5),
             transforms.RandomRotation(10),
-            transforms.ColorJitter(0.2, 0.2),
             transforms.ToTensor(),
             transforms.Normalize(
                 mean=self.dataset_cfg["normalize_mean"],
@@ -89,9 +86,7 @@ class DataPipeline:
 
     def _eval_transforms(self):
         return transforms.Compose([
-            transforms.Resize(
-                (self.dataset_cfg["image_size"], self.dataset_cfg["image_size"])
-            ),
+            transforms.Resize((self.dataset_cfg["image_size"], self.dataset_cfg["image_size"])),
             transforms.ToTensor(),
             transforms.Normalize(
                 mean=self.dataset_cfg["normalize_mean"],
@@ -100,21 +95,22 @@ class DataPipeline:
         ])
 
     # =========================
-    # Dataset Scanning
+    # COLLECT IMAGES
     # =========================
     def _collect_images(self):
+
         image_paths = []
         labels = []
 
         valid_ext = (".png", ".jpg", ".jpeg")
 
-        # walk entire dataset folder
         for root, _, files in os.walk(self.data_root):
-            for f in files:
-                if f.lower().endswith(valid_ext):
-                    full_path = os.path.join(root, f)
 
-                    # infer label from folder name
+            for f in files:
+
+                if f.lower().endswith(valid_ext):
+
+                    full_path = os.path.join(root, f)
                     folder = Path(full_path).parent.name.lower()
 
                     for cls in self.dataset_cfg["class_names"]:
@@ -129,9 +125,10 @@ class DataPipeline:
         return image_paths, labels
 
     # =========================
-    # Task Creation
+    # TASK CREATION
     # =========================
     def prepare_tasks(self):
+
         image_paths, labels = self._collect_images()
 
         logger.info(f"Total images found: {len(image_paths)}")
@@ -139,6 +136,7 @@ class DataPipeline:
         tasks_data = {}
 
         for task in self.task_cfg["task_definitions"]:
+
             task_name = task["name"]
             task_classes = task["classes"]
 
@@ -153,8 +151,6 @@ class DataPipeline:
             if len(task_paths) == 0:
                 logger.warning(f"{task_name}: No data found")
                 continue
-
-            logger.info(f"{task_name}: {len(task_paths)} samples")
 
             train_val_x, test_x, train_val_y, test_y = train_test_split(
                 task_paths,
@@ -183,28 +179,13 @@ class DataPipeline:
                 "classes": task_classes
             }
 
-        self._log(tasks_data)
         return tasks_data
 
     # =========================
-    # Logging
-    # =========================
-    def _log(self, tasks_data):
-        logger.info("\n" + "=" * 60)
-        logger.info("CONTINUAL LEARNING TASKS")
-        logger.info("=" * 60)
-
-        for t, d in tasks_data.items():
-            logger.info(f"\n{t}")
-            logger.info(f"Classes: {d['classes']}")
-            logger.info(f"Train: {len(d['train'][0])}")
-            logger.info(f"Val:   {len(d['val'][0])}")
-            logger.info(f"Test:  {len(d['test'][0])}")
-
-    # =========================
-    # DataLoaders
+    # DATALOADER BUILDER
     # =========================
     def get_dataloaders(self, task_data, batch_size=None):
+
         if batch_size is None:
             batch_size = self.config["training"]["batch_size"]
 
@@ -220,33 +201,42 @@ class DataPipeline:
             train_ds,
             batch_size=batch_size,
             shuffle=True,
-            num_workers=self.hw_cfg["num_workers"],
-            pin_memory=True
+            num_workers=self.hw_cfg["num_workers"]
         )
 
         val_loader = DataLoader(
             val_ds,
             batch_size=batch_size,
             shuffle=False,
-            num_workers=self.hw_cfg["num_workers"],
-            pin_memory=True
+            num_workers=self.hw_cfg["num_workers"]
         )
 
         test_loader = DataLoader(
             test_ds,
             batch_size=batch_size,
             shuffle=False,
-            num_workers=self.hw_cfg["num_workers"],
-            pin_memory=True
+            num_workers=self.hw_cfg["num_workers"]
         )
 
         return train_loader, val_loader, test_loader
 
 
 # =========================
-# PUBLIC API
+# PUBLIC API (FIXED)
 # =========================
 def create_dataloaders(config: dict):
+
     pipeline = DataPipeline(config)
     tasks = pipeline.prepare_tasks()
-    return pipeline, tasks
+
+    train_tasks = []
+    val_tasks = []
+
+    for task_name, task_data in tasks.items():
+
+        train_loader, val_loader, _ = pipeline.get_dataloaders(task_data)
+
+        train_tasks.append((train_loader, val_loader, task_data["classes"]))
+        val_tasks.append((train_loader, val_loader, task_data["classes"]))
+
+    return train_tasks, val_tasks

@@ -7,7 +7,6 @@ dataset:
   download_path: "./data/raw/"
   image_size: 224
 
-  # IMPORTANT: match your folder names (lowercase)
   class_names: ["covid", "normal", "pneumonia"]
 
   normalize_mean: [0.485, 0.456, 0.406]
@@ -19,7 +18,7 @@ dataset:
 
 
 # =========================
-# Task Configuration (CORE)
+# Task Configuration
 # =========================
 tasks:
   num_tasks: 2
@@ -42,20 +41,23 @@ model:
   backbone: "resnet18"
   pretrained: true
   embedding_dim: 512
-  num_classes: 3   # max classes across tasks
+  num_classes: 3
   dropout_rate: 0.3
-  mc_dropout_samples: 20
+  mc_dropout_samples: 10   # reduced for CPU
 
 
 # =========================
-# Training Configuration
+# Training Configuration (CPU SAFE)
 # =========================
 training:
-  batch_size: 32
-  epochs_per_task: 15
+  batch_size: 16           # reduced for CPU
+  epochs_per_task: 10
   learning_rate: 0.001
   optimizer: "adam"
-  weight_decay: 1e-5
+  weight_decay: 0.00001    # FIXED (float, not string)
+  num_workers: 0           # IMPORTANT for CPU
+  clip_grad_norm: 5.0
+  use_amp: false
 
 
 # =========================
@@ -64,7 +66,7 @@ training:
 ewc:
   use_ewc: true
   task_aware: true
-  fisher_eps: 1e-4
+  fisher_eps: 0.0001
   lambda_cc: 1000.0
   lambda_sr: 500.0
   lambda_tp: 100.0
@@ -83,21 +85,22 @@ drift_detection:
 # Replay Buffer
 # =========================
 replay_buffer:
-  buffer_size: 500
+  buffer_size: 300          # reduced for CPU
   use_replay: true
+  embedding_only: false     # IMPORTANT FIX
+
   priority_weights:
     uncertainty: 0.5
     recency: 0.3
     diversity: 0.2
-  embedding_only: true
 
 
 # =========================
-# Hardware
+# Hardware (CPU MODE)
 # =========================
 hardware:
-  device: "auto"
-  num_workers: 4
+  device: "cpu"
+  num_workers: 0
   seed: 42
 
 
