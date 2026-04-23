@@ -1,6 +1,6 @@
 # Catastrophic Forgetting in Healthcare AI - DEAR Framework
 
-A research hackathon prototype implementing the **DEAR framework** (Drift-Aware EWC with Adaptive Replay) for continual learning on Chest X-ray datasets.
+A research project prototype implementing the **DEAR framework** (Drift-Aware EWC with Adaptive Replay) for continual learning on Chest X-ray datasets.
 
 ## Overview
 
